@@ -161,6 +161,9 @@ h1{margin:0;font:600 26px/1.15 var(--mono);text-wrap:balance}
       <div><dt>Tracking</dt><dd id="s-track">--</dd></div>
       <div><dt>Spostamenti</dt><dd id="s-moves">0</dd></div>
       <div><dt>Formato</dt><dd id="s-fmt">--</dd></div>
+      <div><dt>Grezzo centro</dt><dd id="s-raw">--</dd></div>
+      <div><dt>Decodifica</dt><dd id="s-dec">--</dd></div>
+      <div><dt>Scala API</dt><dd id="s-k">--</dd></div>
     </dl>
     <div class="zoomrow" id="zoomrow" hidden>
       <span>Zoom</span>
@@ -545,37 +548,87 @@ function updateDepth(frame, view) {
     depthUniforms.uDepth.value = depthTex;
     depthLabel = `${w}×${h}`;
   }
-  const src = session.depthDataFormat === 'float32' ? new Float32Array(info.data) : new Uint16Array(info.data);
-  const k = info.rawValueToMeters, dst = depthTex.image.data, n = Math.min(dst.length, src.length);
-  for (let i = 0; i < n; i++) dst[i] = THREE.DataUtils.toHalfFloat(src[i] * k);
-  depthTex.needsUpdate = true;
+  const isU16 = session.depthDataFormat !== 'float32';
+  const src = isU16 ? new Uint16Array(info.data) : new Float32Array(info.data);
   const M = info.normTextureFromNormView || info.normDepthBufferFromNormView; /* nome nuovo e vecchio */
   if (!M) { depthUniforms.uHasDepth.value = 0; return; }
+  const k0 = info.rawValueToMeters;
+
+  /* Ogni mezzo secondo confrontiamo la nostra lettura con quella ufficiale di WebXR su 9 punti */
+  const now = performance.now();
+  if (now - calibT > 500 && typeof info.getDepthInMeters === 'function') {
+    calibT = now;
+    calibrate(info, src, w, h, k0, M.matrix, isU16);
+  }
+  const k = k0 * dec.scale, mask = (isU16 && dec.low13) ? 0x1FFF : 0;
+  const dst = depthTex.image.data, n = Math.min(dst.length, src.length);
+  if (mask) for (let i = 0; i < n; i++) dst[i] = THREE.DataUtils.toHalfFloat((src[i] & mask) * k);
+  else for (let i = 0; i < n; i++) dst[i] = THREE.DataUtils.toHalfFloat(src[i] * k);
+  depthTex.needsUpdate = true;
   depthUniforms.uDepthMat.value.fromArray(M.matrix);
   depthUniforms.uHasDepth.value = 1;
 
   /* copertura e distanza al centro, aggiornate 4 volte al secondo */
-  const now = performance.now();
   if (now - depthStatT > 250) {
     depthStatT = now;
     let valid = 0;
-    for (let i = 0; i < n; i += 4) if (src[i] > 0) valid++;
+    for (let i = 0; i < n; i += 4) if ((mask ? src[i] & mask : src[i]) > 0) valid++;
     coverLabel = Math.round(100 * valid / Math.ceil(n / 4)) + '%';
     const m = M.matrix, z = depthUniforms.uZoom.value;
     const cx = 0.5, cy = 0.5;
     const u = m[0] * cx + m[4] * cy + m[12], v = m[1] * cx + m[5] * cy + m[13];
     const ix = Math.min(w - 1, Math.max(0, Math.floor(u * w))), iy = Math.min(h - 1, Math.max(0, Math.floor(v * h)));
-    const c = src[iy * w + ix] * k;
-    centerM = c;
-    centerLabel = c > 0 ? c.toFixed(2) + ' m' : 'n/d';
+    const raw = src[iy * w + ix];
+    const c = (mask ? raw & mask : raw) * k;
+    let official = NaN;
+    try { official = info.getDepthInMeters(0.5, 0.5); } catch {}
+    centerM = official > 0 ? official : c;
+    centerLabel = centerM > 0 ? centerM.toFixed(2) + ' m' : 'n/d';
+    rawLabel = isU16 ? `${raw} (0x${raw.toString(16)})` : raw.toFixed(3);
+    decLabel = `${dec.low13 ? '13 bit' : '16 bit'} ×${dec.scale.toFixed(2)}${dec.ok ? '' : ' ?'}`;
+    kLabel = String(k0);
   }
   if (opts.debug && now - pipT > 100) {
     pipT = now;
     const L = session.renderState.baseLayer;
-    if (L) drawPip(src, w, h, k, M.matrix, L.framebufferWidth, L.framebufferHeight);
+    if (L) drawPip(src, w, h, k, M.matrix, L.framebufferWidth, L.framebufferHeight, mask);
   }
 }
 let depthStatT = 0, coverLabel = '--', centerLabel = '--', centerM = 0, pipT = 0;
+let calibT = 0, rawLabel = '--', decLabel = '--', kLabel = '--';
+const dec = { low13: false, scale: 1, ok: false };
+
+/* Sceglie come leggere i valori grezzi: 16 bit interi o 13 bit bassi (i 3 alti sono confidenza),
+   più un eventuale fattore di scala, confrontando con getDepthInMeters su una griglia di punti. */
+function calibrate(info, src, w, h, k0, m, isU16) {
+  const pts = [];
+  for (const vy of [0.3, 0.5, 0.7]) for (const vx of [0.3, 0.5, 0.7]) {
+    let truth = NaN;
+    try { truth = info.getDepthInMeters(vx, vy); } catch {}
+    if (!(truth > 0.05)) continue;
+    const u = m[0] * vx + m[4] * vy + m[12], v = m[1] * vx + m[5] * vy + m[13];
+    const ix = Math.floor(u * w), iy = Math.floor(v * h);
+    if (ix < 0 || iy < 0 || ix >= w || iy >= h) continue;
+    const r = src[iy * w + ix];
+    if (r > 0) pts.push([truth, r]);
+  }
+  if (pts.length < 3) return;
+  const median = a => { const b = a.slice().sort((x, y) => x - y); return b[b.length >> 1]; };
+  const evalMode = low => {
+    const ratios = pts.map(([t, r]) => { const d = (low ? r & 0x1FFF : r) * k0; return d > 0 ? t / d : NaN; }).filter(x => x > 0);
+    if (ratios.length < 3) return null;
+    const med = median(ratios);
+    const spread = median(ratios.map(x => Math.abs(x / med - 1)));
+    return { med, spread };
+  };
+  const full = evalMode(false), low = isU16 ? evalMode(true) : null;
+  const exact = r => r && Math.abs(r.med - 1) < 0.08 && r.spread < 0.15;
+  if (exact(full)) { dec.low13 = false; dec.scale = 1; dec.ok = true; return; }
+  if (exact(low)) { dec.low13 = true; dec.scale = 1; dec.ok = true; return; }
+  if (!full) return;
+  /* nessuna decodifica esatta: 16 bit con fattore di correzione misurato */
+  dec.low13 = false; dec.scale = full.med; dec.ok = full.spread < 0.15;
+}
 
 /* colori turbo anche in JavaScript, per il riquadro */
 function turboJS(x) {
@@ -587,7 +640,7 @@ function turboJS(x) {
   return [r * 255, g * 255, b * 255];
 }
 /* Ridisegna la profondità orientata come lo schermo, campionando i dati CPU con la stessa matrice */
-function drawPip(src, w, h, k, m, fbW, fbH) {
+function drawPip(src, w, h, k, m, fbW, fbH, mask) {
   const cv = $('pipc'), W = 96, H = Math.round(96 * fbH / fbW);
   if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
   const ctx = cv.getContext('2d'), img = ctx.createImageData(W, H), p = img.data;
@@ -597,7 +650,8 @@ function drawPip(src, w, h, k, m, fbW, fbH) {
       const vx = (px + .5) / W;
       const u = m[0] * vx + m[4] * vy + m[12], v = m[1] * vx + m[5] * vy + m[13];
       const ix = Math.floor(u * w), iy = Math.floor(v * h), j = (py * W + px) * 4;
-      const d = (ix >= 0 && iy >= 0 && ix < w && iy < h) ? src[iy * w + ix] * k : 0;
+      const r = (ix >= 0 && iy >= 0 && ix < w && iy < h) ? src[iy * w + ix] : 0;
+      const d = (mask ? r & mask : r) * k;
       if (d > 0) { const c = turboJS(d / 5); p[j] = c[0]; p[j + 1] = c[1]; p[j + 2] = c[2]; }
       else { const hatch = ((px + py) >> 2) & 1; p[j] = hatch ? 110 : 40; p[j + 1] = 8; p[j + 2] = 14; }
       p[j + 3] = 255;
@@ -702,6 +756,9 @@ function onFrame(t, frame) {
     if (depthLabel) $('s-depth').textContent = depthLabel;
     $('s-center').textContent = centerLabel;
     $('s-cover').textContent = coverLabel;
+    $('s-raw').textContent = rawLabel;
+    $('s-dec').textContent = decLabel;
+    $('s-k').textContent = kLabel;
   }
   if (t - fpsT > 1000) {
     $('s-fps').textContent = (frames * 1000 / (t - fpsT)).toFixed(0);
