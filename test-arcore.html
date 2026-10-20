@@ -43,6 +43,11 @@ h1{margin:0;font:600 26px/1.15 var(--mono);text-wrap:balance}
 .primary{padding:15px 18px;border-radius:12px;border:0;background:var(--ink);color:#0a0a0a;font:600 15px var(--mono);cursor:pointer}
 .primary:disabled{opacity:.45;cursor:default}
 #status{margin:0;font:13px/1.4 var(--mono);color:var(--dim);min-height:1.4em}
+.feats{margin:0;padding:12px 14px;border:1px solid var(--faint);border-radius:10px;display:grid;gap:8px;font:13px var(--mono)}
+.feats legend{padding:0 6px;color:var(--dim);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+.feats label{display:flex;align-items:center;gap:10px}
+.feats input{width:18px;height:18px;accent-color:var(--amber)}
+#lastlog{margin:0;padding:10px 12px;border-radius:8px;border:1px solid var(--amber);color:var(--amber);font:12px/1.4 var(--mono);white-space:pre-wrap;word-break:break-word}
 
 /* ---------- overlay durante la sessione AR ---------- */
 #overlay{position:fixed;inset:0;pointer-events:none;font-family:var(--mono)}
@@ -99,9 +104,19 @@ h1{margin:0;font:600 26px/1.15 var(--mono);text-wrap:balance}
       <li>Girati dall'altra parte e poi torna a guardarla: si sarà avvicinata.</li>
     </ol>
 
+    <fieldset class="feats">
+      <legend>Funzioni da attivare (per trovare quella che blocca)</legend>
+      <label><input type="checkbox" id="f-hit" checked> Rilevamento pavimento</label>
+      <label><input type="checkbox" id="f-depth" checked> Profondità ARCore</label>
+      <label><input type="checkbox" id="f-overlay" checked> Pannello sopra l'AR</label>
+      <label><input type="checkbox" id="f-cam"> Zoom (accesso fotocamera)</label>
+      <label><input type="checkbox" id="f-render" checked> Disegno 3D</label>
+    </fieldset>
+
     <button class="primary" id="start" disabled>Entra in AR</button>
+    <pre id="lastlog" hidden></pre>
     <p id="status" role="status"></p>
-    <p class="note">In AR l'obiettivo lo sceglie ARCore (sempre la fotocamera principale, l'unica calibrata per il tracking). Lo zoom qui è digitale: ingrandisce l'immagine e la scena 3D insieme, così la presenza resta allineata.</p>
+    <p class="note">Se si blocca: esci con il tasto indietro, il riepilogo dell'ultima sessione compare qui sopra. Poi riprova togliendo una funzione alla volta. In AR l'obiettivo lo sceglie ARCore (sempre la fotocamera principale, l'unica calibrata per il tracking). Lo zoom qui è digitale: ingrandisce l'immagine e la scena 3D insieme, così la presenza resta allineata.</p>
   </div>
 </section>
 
@@ -321,6 +336,43 @@ let frames = 0, fpsT = 0, moves = 0, uiT = 0;
 let outSince = 0, movedThisLook = false;
 const opts = { approach: true, debug: false, flip: false, zoom: 1, zoomFlip: false, zoomOk: false };
 
+/* ---------- diagnostica ---------- */
+const F = { hit: true, depth: true, overlay: true, cam: false, render: true };
+const D = { frames: 0, stage: '-', start: 0, feats: '', enabled: '', lastFrameAt: 0, lastSave: 0 };
+function step(name) {
+  D.stage = name;
+  if (D.frames < 400 || performance.now() - D.lastSave > 1000) saveLog();
+  return true;
+}
+function saveLog() {
+  D.lastSave = performance.now();
+  try {
+    localStorage.setItem('arlog', JSON.stringify({ frames: D.frames, stage: D.stage, feats: D.feats, enabled: D.enabled,
+      secs: D.start ? ((Date.now() - D.start) / 1000).toFixed(1) : '0', ua: navigator.userAgent }));
+  } catch {}
+}
+function showLastLog() {
+  let l = null;
+  try { l = JSON.parse(localStorage.getItem('arlog') || 'null'); } catch {}
+  if (!l) return;
+  $('lastlog').hidden = false;
+  $('lastlog').textContent = `Ultima sessione AR
+Richieste: ${l.feats}
+Attive: ${l.enabled || 'n/d'}
+Frame disegnati: ${l.frames} in ${l.secs} s
+Ultimo passo: ${l.stage}`;
+}
+showLastLog();
+setInterval(() => {
+  if (!session || !D.lastFrameAt) return;
+  const idle = (performance.now() - D.lastFrameAt) / 1000;
+  if (idle > 1.5) {
+    $('err').hidden = false;
+    $('err').textContent = `Il ciclo AR è fermo da ${idle.toFixed(0)} s dopo ${D.frames} frame. Ultimo passo: ${D.stage}. Esci con il tasto indietro e guarda il riepilogo.`;
+    saveLog();
+  }
+}, 500);
+
 function showError(where, e) {
   console.error(where, e);
   $('err').hidden = false;
@@ -331,12 +383,19 @@ $('start').addEventListener('click', async () => {
   $('start').disabled = true;
   setStatus('Avvio della sessione...');
   try {
-    session = await navigator.xr.requestSession('immersive-ar', {
-      requiredFeatures: ['hit-test'],
-      optionalFeatures: ['depth-sensing', 'dom-overlay', 'camera-access'],
-      depthSensing: { usagePreference: ['cpu-optimized'], dataFormatPreference: ['luminance-alpha', 'float32'] },
-      domOverlay: { root: $('overlay') }
-    });
+    F.hit = $('f-hit').checked; F.depth = $('f-depth').checked; F.overlay = $('f-overlay').checked;
+    F.cam = $('f-cam').checked; F.render = $('f-render').checked;
+    const optional = [];
+    if (F.hit) optional.push('hit-test');
+    if (F.depth) optional.push('depth-sensing');
+    if (F.overlay) optional.push('dom-overlay');
+    if (F.cam) optional.push('camera-access');
+    const init = { optionalFeatures: optional };
+    if (F.depth) init.depthSensing = { usagePreference: ['cpu-optimized'], dataFormatPreference: ['luminance-alpha', 'float32'] };
+    if (F.overlay) init.domOverlay = { root: $('overlay') };
+    D.frames = 0; D.lastFrameAt = 0; D.stage = 'richiesta sessione'; D.start = Date.now(); D.feats = optional.join(', ') || 'nessuna';
+    saveLog();
+    session = await navigator.xr.requestSession('immersive-ar', init);
   } catch (e) {
     setStatus('Impossibile avviare l\'AR: ' + (e.message || e));
     $('start').disabled = false;
@@ -362,8 +421,14 @@ $('start').addEventListener('click', async () => {
     }
     $('zoomrow').hidden = !opts.zoomOk;
 
-    const viewerSpace = await session.requestReferenceSpace('viewer');
-    hitSource = await session.requestHitTestSource({ space: viewerSpace });
+    if (F.hit && feats.includes('hit-test')) {
+      D.stage = 'avvio rilevamento pavimento'; saveLog();
+      const viewerSpace = await session.requestReferenceSpace('viewer');
+      hitSource = await session.requestHitTestSource({ space: viewerSpace });
+    } else {
+      $('hint').textContent = 'Tocca lo schermo: la presenza apparirà 2 metri davanti a te';
+    }
+    D.enabled = feats.join(', ') || 'nessuna';
 
     session.addEventListener('select', placeGhost);
     session.addEventListener('end', onEnd);
@@ -378,8 +443,15 @@ $('start').addEventListener('click', async () => {
 $('hud').addEventListener('beforexrselect', e => e.preventDefault());
 
 function placeGhost() {
-  if (!reticle.visible) return;
-  ghost.position.setFromMatrixPosition(reticle.matrix);
+  if (hitSource) {
+    if (!reticle.visible) return;
+    ghost.position.setFromMatrixPosition(reticle.matrix);
+  } else {
+    const c = renderer.xr.getCamera(), fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(c.quaternion);
+    fwd.y = 0; if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, -1); fwd.normalize();
+    c.getWorldPosition(ghost.position);
+    ghost.position.addScaledVector(fwd, 2); ghost.position.y -= 1.4;
+  }
   ghost.visible = true;
   movedThisLook = false; outSince = 0;
   $('hint').hidden = true;
@@ -397,6 +469,7 @@ function onEnd() {
   $('hint').hidden = false;
   $('hint').textContent = 'Inquadra il pavimento e muovi piano il telefono';
   setStatus(`Sessione chiusa. La presenza si è spostata ${moves} volte.`);
+  D.stage += ' (sessione chiusa)'; saveLog(); showLastLog();
 }
 
 const camPos = new THREE.Vector3(), tmp = new THREE.Vector3(), ndc = new THREE.Vector3(), headOff = new THREE.Vector3(0, 0.9, 0);
@@ -433,7 +506,9 @@ function applyZoomToCameras(xrCam, z) {
 
 function onFrame(t, frame) {
   if (!frame || !session) return;
+  D.frames++; D.lastFrameAt = performance.now();
   try {
+    step('posa');
     const ref = renderer.xr.getReferenceSpace();
     const pose = frame.getViewerPose(ref);
     trackLabel = pose ? (pose.emulatedPosition ? 'parziale' : 'ok') : 'perso';
@@ -441,12 +516,12 @@ function onFrame(t, frame) {
     const layer = session.renderState.baseLayer;
     if (layer) depthUniforms.uViewport.value.set(layer.framebufferWidth, layer.framebufferHeight);
 
-    if (pose && session.depthUsage) updateDepth(frame, pose.views[0]);
+    if (pose && session.depthUsage) { step('profondità'); updateDepth(frame, pose.views[0]); }
 
     /* zoom digitale */
     const z = opts.zoomOk ? opts.zoom : 1;
     depthUniforms.uZoom.value = z;
-    if (pose && z > 1.001 && glBinding && layer && pose.views[0].camera) {
+    if (pose && z > 1.001 && glBinding && step('zoom') && layer && pose.views[0].camera) {
       try {
         const view = pose.views[0];
         const tex = glBinding.getCameraImage(view.camera);
@@ -455,6 +530,7 @@ function onFrame(t, frame) {
     }
 
     if (hitSource && pose) {
+      step('pavimento');
       const hits = frame.getHitTestResults(hitSource);
       const p = hits.length ? hits[0].getPose(ref) : null;
       if (p) {
@@ -490,7 +566,8 @@ function onFrame(t, frame) {
     }
 
     debugQuad.visible = opts.debug;
-    renderer.render(scene, camera);
+    if (F.render) { step('disegno 3D'); renderer.render(scene, camera); }
+    step('frame completo');
   } catch (e) {
     if (t - lastErrAt > 1000) { showError('frame', e); lastErrAt = t; }
   }

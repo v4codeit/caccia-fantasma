@@ -183,6 +183,16 @@ input[type=range]{width:100%;accent-color:var(--amber)}
       </div>
     </div>
 
+    <div class="row">
+      <span>Stabilizzazione</span>
+      <div class="seg" id="smooths">
+        <button data-sm="0" aria-pressed="false">Off</button>
+        <button data-sm="0.5" aria-pressed="false">Leggera</button>
+        <button data-sm="0.3" aria-pressed="true">Media</button>
+        <button data-sm="0.15" aria-pressed="false">Forte</button>
+      </div>
+    </div>
+
     <div class="row" id="ghostrow" hidden>
       <span>Distanza della presenza: <b id="gd-val">media</b></span>
       <div class="inline">
@@ -235,7 +245,8 @@ const S = {
   warm: 4, samples: [], segStart: 0, sessionStart: 0, loadSec: 0,
   infEma: null, prepEma: null, lastIter: 0, byRes: {}, buf: null,
   q: null, capQ: null, gyroEvents: 0, ghostDir: null,
-  dispFrames: 0, dispT: 0, hasDepth: false
+  dispFrames: 0, dispT: 0, hasDepth: false,
+  stabilize: true, smooth: 0.3
 };
 
 /* ---------- quaternioni minimi per il giroscopio ---------- */
@@ -332,7 +343,7 @@ async function startCamera(deviceId) {
   S.camLabel = S.track.label || '';
   cam.style.transform = st.facingMode === 'user' ? 'scaleX(-1)' : '';
   setupZoom();
-  S.vw = 0; S.lo = S.hi = null; S.hasDepth = false;
+  S.vw = 0; S.stab = null; S.hasDepth = false;
 }
 
 function camName(d, i, counts) {
@@ -452,7 +463,7 @@ $('start').addEventListener('click', async () => {
 
 /* ---------- canvas ---------- */
 const grab = document.createElement('canvas');
-const gctx = grab.getContext('2d', { willReadFrequently: true });
+const gctx = grab.getContext('2d');
 const depthCv = document.createElement('canvas');
 const dctx = depthCv.getContext('2d');
 const fx = $('fx');
@@ -473,14 +484,16 @@ function fitSize() {
   return true;
 }
 
-function toTensor() {
+/* Due buffer alternati: mentre il modello lavora su uno, si prepara il fotogramma successivo nell'altro */
+S.bufs = [null, null];
+function toTensor(slot) {
   const dz = digitalZoom();
   const sw = S.vw / dz, sh = S.vh / dz;
   gctx.drawImage(cam, (S.vw - sw) / 2, (S.vh - sh) / 2, sw, sh, 0, 0, S.W, S.H);
   const px = gctx.getImageData(0, 0, S.W, S.H).data;
   const n = S.W * S.H;
-  if (!S.buf || S.buf.length !== 3 * n) S.buf = new Float32Array(3 * n);
-  const f = S.buf;
+  if (!S.bufs[slot] || S.bufs[slot].length !== 3 * n) S.bufs[slot] = new Float32Array(3 * n);
+  const f = S.bufs[slot];
   const a0 = 1 / (255 * STD[0]), a1 = 1 / (255 * STD[1]), a2 = 1 / (255 * STD[2]);
   const b0 = MEAN[0] / STD[0], b1 = MEAN[1] / STD[1], b2 = MEAN[2] / STD[2];
   for (let i = 0, j = 0; i < n; i++, j += 4) {
@@ -534,56 +547,138 @@ const ghost = (() => {
   return c;
 })();
 
+/* ---------- stabilizzazione temporale ----------
+   Ogni mappa di Depth Anything ha scala e offset propri, da qui lo sfarfallio.
+   1) range robusto con percentili 2-98 invece di min/max;
+   2) la nuova mappa viene riallineata (scala + offset, minimi quadrati) alla mappa stabile precedente,
+      spostata di quanto è ruotato il telefono nel frattempo;
+   3) fusione nel tempo: peso basso al nuovo frame da fermi, alto quando ci si muove. */
+S.stab = null; S.stab2 = null; S.stabQ = null; S.stabW = 0; S.stabH = 0;
+const clamp01x = v => v < -0.2 ? -0.2 : v > 1.2 ? 1.2 : v;
+function stabilize(d, ow, oh, capQ) {
+  const n = ow * oh;
+  const step = Math.max(1, Math.floor(n / 4000));
+  const smp = [];
+  for (let i = 0; i < n; i += step) smp.push(d[i]);
+  smp.sort((a, b) => a - b);
+  const lo = smp[Math.floor(smp.length * .02)], hi = smp[Math.floor(smp.length * .98)];
+  const inv = 1 / Math.max(1e-6, hi - lo), base = -lo * inv;
+
+  const fresh = !S.stab || S.stabW !== ow || S.stabH !== oh || !S.stabilize;
+  if (fresh) {
+    S.stab = new Float32Array(n); S.stab2 = new Float32Array(n); S.stabW = ow; S.stabH = oh;
+    for (let i = 0; i < n; i++) S.stab[i] = clamp01x(d[i] * inv + base);
+    S.stabQ = capQ; return;
+  }
+
+  /* spostamento in pixel della mappa precedente dovuto alla rotazione */
+  let ox = 0, oy = 0, lost = false;
+  if (capQ && S.stabQ) {
+    const zoomTotal = (S.zoomHw ? S.zoom : 1) * digitalZoom();
+    const F = (Math.max(ow, oh) / 2) / (Math.tan(HFOV_LONG / 2) / Math.max(0.3, zoomTotal));
+    const c = qRot(qConj(capQ), qRot(S.stabQ, FORWARD));
+    if (c[2] < -0.05) { ox = F * c[0] / -c[2]; oy = -F * c[1] / -c[2]; } else lost = true;
+  }
+  const oxi = Math.round(ox), oyi = Math.round(oy);
+  const prev = S.stab, out = S.stab2;
+
+  /* scala e offset che allineano la nuova mappa alla precedente */
+  let a = inv, b = base;
+  if (!lost) {
+    let sx = 0, sy = 0, sxx = 0, sxy = 0, m = 0;
+    for (let y = 1; y < oh; y += 3) {
+      const py = y - oyi; if (py < 0 || py >= oh) continue;
+      for (let x = 1; x < ow; x += 3) {
+        const px = x - oxi; if (px < 0 || px >= ow) continue;
+        const v = d[y * ow + x], p = prev[py * ow + px];
+        sx += v; sy += p; sxx += v * v; sxy += v * p; m++;
+      }
+    }
+    if (m > n / 60) {
+      const den = m * sxx - sx * sx;
+      if (Math.abs(den) > 1e-12) {
+        let aa = (m * sxy - sx * sy) / den;
+        aa = Math.min(inv * 2, Math.max(inv * .5, aa));
+        const bb = (sy - aa * sx) / m;
+        a = aa * .92 + inv * .08; b = bb * .92 + base * .08; /* leggero richiamo al range robusto contro la deriva */
+      }
+    }
+  }
+
+  const motion = Math.hypot(ox, oy) / Math.max(ow, oh);
+  const w = lost ? 1 : Math.min(1, S.smooth + motion * 6);
+  for (let y = 0; y < oh; y++) {
+    const py = y - oyi, rowIn = py >= 0 && py < oh;
+    for (let x = 0; x < ow; x++) {
+      const i = y * ow + x, al = clamp01x(d[i] * a + b);
+      const px = x - oxi;
+      out[i] = (!lost && rowIn && px >= 0 && px < ow) ? prev[py * ow + px] + (al - prev[py * ow + px]) * w : al;
+    }
+  }
+  S.stab = out; S.stab2 = prev; S.stabQ = capQ;
+}
+
 /* Scrive la mappa (colori o maschera) nel canvas piccolo: chiamata solo quando arriva una nuova profondità */
-function paintDepth(pd) {
+function paintDepth(pd, capQ) {
   const dims = pd.dims, oh = dims[dims.length - 2], ow = dims[dims.length - 1];
   let d = pd.data;
   if (d instanceof Uint16Array) { const f = new Float32Array(d.length); for (let i = 0; i < d.length; i++) f[i] = halfToFloat(d[i]); d = f; }
-  let mn = Infinity, mx = -Infinity;
-  for (let i = 0; i < d.length; i++) { const v = d[i]; if (v < mn) mn = v; if (v > mx) mx = v; }
-  S.lo = S.lo == null ? mn : S.lo * .85 + mn * .15;
-  S.hi = S.hi == null ? mx : S.hi * .85 + mx * .15;
-  const inv = 1 / Math.max(1e-6, S.hi - S.lo);
+  stabilize(d, ow, oh, capQ);
+  const s = S.stab;
   if (depthCv.width !== ow || depthCv.height !== oh) { depthCv.width = ow; depthCv.height = oh; }
   const img = dctx.createImageData(ow, oh), p = img.data;
   if (S.mode === 'ghost') {
     const g = 1 - S.gdist / 100;
-    for (let i = 0, j = 0; i < d.length; i++, j += 4) {
-      const v = Math.min(1, Math.max(0, (d[i] - S.lo) * inv));
-      const a = Math.min(1, Math.max(0, (g - v) / .07 + .5));
+    for (let i = 0, j = 0; i < s.length; i++, j += 4) {
+      const v = s[i] < 0 ? 0 : s[i] > 1 ? 1 : s[i];
+      const a = Math.min(1, Math.max(0, (g - v) / .08 + .5));
       p[j] = p[j + 1] = p[j + 2] = 255; p[j + 3] = a * 255;
     }
   } else {
-    for (let i = 0, j = 0; i < d.length; i++, j += 4) {
-      const k = Math.min(255, Math.max(0, ((d[i] - S.lo) * inv * 255) | 0)) * 3;
+    for (let i = 0, j = 0; i < s.length; i++, j += 4) {
+      const k = Math.min(255, Math.max(0, (s[i] * 255) | 0)) * 3;
       p[j] = LUT[k]; p[j + 1] = LUT[k + 1]; p[j + 2] = LUT[k + 2]; p[j + 3] = 255;
     }
   }
   dctx.putImageData(img, 0, 0);
+  S.capQ = capQ;
   S.hasDepth = true;
 }
 
 /* ---------- ciclo di inferenza, indipendente dallo schermo ---------- */
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+/* Pipeline: il fotogramma N+1 si prepara mentre il modello calcola il fotogramma N */
 async function inferLoop() {
+  let pending = null, slot = 0, lastDone = 0;
   while (true) {
-    if (S.paused || document.hidden || !fitSize()) { S.lastIter = 0; await sleep(120); continue; }
+    if (S.paused || document.hidden || !fitSize()) {
+      if (pending) { try { await pending.p; } catch {} pending = null; }
+      S.lastIter = 0; await sleep(120); continue;
+    }
     const t0 = performance.now();
     const capQ = S.q ? S.q.slice() : null;
-    const x = toTensor();
+    const x = toTensor(slot); slot ^= 1;
     const t1 = performance.now();
+    const job = { p: S.model({ pixel_values: x }), t1, capQ, prep: t1 - t0 };
+    job.p.catch(() => {});
+    if (!pending) { pending = job; continue; }
+
     let out;
-    try { out = await S.model({ pixel_values: x }); }
-    catch (e) { console.error(e); $('hz').textContent = 'ERR'; $('s-inf').textContent = String(e.message || e).slice(0, 40); await sleep(1000); continue; }
+    try { out = await pending.p; }
+    catch (e) {
+      console.error(e); $('hz').textContent = 'ERR'; $('s-inf').textContent = String(e.message || e).slice(0, 40);
+      pending = job; await sleep(500); continue;
+    }
     const t2 = performance.now();
-    paintDepth(out.predicted_depth);
-    S.capQ = capQ;
+    paintDepth(out.predicted_depth, pending.capQ);
     const t3 = performance.now();
+    const infMs = t2 - Math.max(pending.t1, lastDone);
+    lastDone = t2;
 
     if (S.lastIter && S.warm <= 0) {
       S.samples.push({ t: t3, dt: t3 - S.lastIter });
-      S.infEma = S.infEma == null ? (t2 - t1) : S.infEma * .9 + (t2 - t1) * .1;
-      S.prepEma = S.prepEma == null ? (t1 - t0) : S.prepEma * .9 + (t1 - t0) * .1;
+      S.infEma = S.infEma == null ? infMs : S.infEma * .9 + infMs * .1;
+      S.prepEma = S.prepEma == null ? pending.prep : S.prepEma * .9 + pending.prep * .1;
       updateStats(t3);
     } else if (S.warm > 0) {
       S.warm--;
@@ -591,7 +686,7 @@ async function inferLoop() {
       $('hz').textContent = '..';
     }
     S.lastIter = t3;
-    await sleep(0);
+    pending = job;
   }
 }
 
@@ -694,6 +789,13 @@ $('modes').addEventListener('click', e => {
   S.hasDepth = false;
 });
 $('anchor').addEventListener('click', () => { S.ghostDir = null; });
+$('smooths').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const v = +b.dataset.sm;
+  S.stabilize = v > 0; if (v > 0) S.smooth = v;
+  pressGroup($('smooths'), 'sm', b.dataset.sm);
+  S.stab = null;
+});
 $('sizes').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
   const v = +b.dataset.size; if (v === S.short) return;
@@ -720,7 +822,7 @@ function report() {
     'GPU: ' + (S.gpu.ok ? S.gpu.info + (S.gpu.f16 ? ' · f16 ok' : ' · f16 no') : 'WebGPU assente'),
     `Backend: ${S.backend} · ${S.dtype}`,
     `Fotocamera: ${S.camLabel || 'n/d'} · zoom ${(+S.zoom).toFixed(1)}× ${S.zoomHw ? 'sensore' : 'digitale'}`,
-    `Giroscopio: ${S.gyroEvents ? 'attivo' : 'assente'}`,
+    `Giroscopio: ${S.gyroEvents ? 'attivo' : 'assente'} · stabilizzazione ${S.stabilize ? S.smooth : 'off'}`,
     `Modello caricato in: ${S.loadSec.toFixed(1)} s`,
     `Durata test: ${$('clock').textContent}`,
     `Schermo: ${$('fps').textContent} fps · profondità ${$('hz').textContent} Hz · inferenza ${S.infEma ? S.infEma.toFixed(0) : '--'} ms · prep ${S.prepEma ? S.prepEma.toFixed(0) : '--'} ms`,
