@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Caccia al Fantasma</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{--bg:#060708;--ink:#ebe7dc;--dim:rgba(235,231,220,.6);--faint:rgba(235,231,220,.16);--rec:#ff453a;--amber:#ffbf47;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;color-scheme:dark}
+*{box-sizing:border-box}
+html,body{min-height:100%;margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:460px;margin:0 auto;display:grid;gap:18px;
+  padding-block:calc(32px + env(safe-area-inset-top,0px)) calc(32px + env(safe-area-inset-bottom,0px));
+  padding-left:max(18px,env(safe-area-inset-left,0px));padding-right:max(18px,env(safe-area-inset-right,0px))}
+.eyebrow{font:500 11px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--amber);display:flex;align-items:center;gap:8px}
+.eyebrow i{width:8px;height:8px;border-radius:50%;background:var(--rec);box-shadow:0 0 10px var(--rec)}
+h1{margin:0;font:600 28px/1.15 var(--mono)}
+p{margin:0;color:var(--dim)}
+a.test{display:grid;gap:6px;padding:16px;border:1px solid var(--faint);border-radius:12px;color:var(--ink);text-decoration:none}
+a.test:hover,a.test:focus-visible{border-color:var(--amber);outline:none}
+a.test b{font:600 16px var(--mono)}
+a.test span{color:var(--dim);font-size:14px}
+a.test em{font:500 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--amber);font-style:normal}
+</style>
+</head>
+<body>
+<main>
+  <div class="eyebrow"><i></i>Laboratorio · Halloween</div>
+  <h1>Caccia al Fantasma</h1>
+  <p>Due test per capire quanto realismo regge il telefono. Apri le pagine in Chrome o Safari, non dentro altre app.</p>
+  <a class="test" href="test-arcore.html">
+    <em>Android · Chrome</em>
+    <b>Presenza in ARCore</b>
+    <span>Tracking della stanza, occlusione con la profondità di Google e la sagoma che si avvicina quando non guardi.</span>
+  </a>
+  <a class="test" href="test-profondita.html">
+    <em>Tutti i telefoni</em>
+    <b>Profondità dalla fotocamera</b>
+    <span>Depth Anything nel browser: misura fps e prova l'occlusione senza ARCore, la strada per iPhone.</span>
+  </a>
+</main>
+</body>
+</html>

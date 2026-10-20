@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Test Profondità</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: fotocamera a tutto schermo, OSD da videocamera in alto, pannello misure in basso */
+:root{
+  --bg:#060708;
+  --ink:#ebe7dc;
+  --dim:rgba(235,231,220,.58);
+  --faint:rgba(235,231,220,.14);
+  --glass:rgba(8,9,11,.78);
+  --rec:#ff453a;
+  --amber:#ffbf47;
+  --ok:#7fd99a;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 var(--sans);-webkit-text-size-adjust:100%}
+[hidden]{display:none!important}
+button{font:inherit;color:inherit}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+
+/* ---------- schermata iniziale ---------- */
+#intro{min-height:100%;display:grid;place-items:center;
+  padding-block:calc(24px + env(safe-area-inset-top,0px)) calc(24px + env(safe-area-inset-bottom,0px));
+  padding-left:max(18px,env(safe-area-inset-left,0px));padding-right:max(18px,env(safe-area-inset-right,0px))}
+.card{width:100%;max-width:440px;display:grid;gap:18px}
+.eyebrow{font:500 11px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--amber);display:flex;align-items:center;gap:8px}
+.eyebrow i{width:8px;height:8px;border-radius:50%;background:var(--rec);box-shadow:0 0 10px var(--rec)}
+h1{margin:0;font:600 26px/1.15 var(--mono);letter-spacing:-.01em;text-wrap:balance}
+.lead{margin:0;color:var(--dim)}
+.checks{display:grid;gap:8px;margin:0;padding:12px 14px;border:1px solid var(--faint);border-radius:10px;font:13px/1.4 var(--mono)}
+.checks div{display:flex;justify-content:space-between;gap:12px}
+.checks span:last-child{text-align:right}
+.good{color:var(--ok)} .warn{color:var(--amber)} .bad{color:var(--rec)}
+label.field{display:grid;gap:6px;font:500 12px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+select{appearance:none;width:100%;padding:12px 14px;border-radius:10px;border:1px solid var(--faint);background:#111316;color:var(--ink);font:14px var(--mono)}
+.primary{padding:15px 18px;border-radius:12px;border:0;background:var(--ink);color:#0a0a0a;font:600 15px var(--mono);letter-spacing:.02em;cursor:pointer}
+.primary:disabled{opacity:.5;cursor:default}
+.progress{height:4px;border-radius:2px;background:var(--faint);overflow:hidden}
+.progress b{display:block;height:100%;width:0;background:var(--amber);transition:width .2s}
+#status{margin:0;font:13px/1.4 var(--mono);color:var(--dim);min-height:1.4em}
+.note{margin:0;font-size:13px;color:var(--dim)}
+
+/* ---------- scena ---------- */
+#stage{position:fixed;inset:0;background:#000;overflow:hidden}
+#cam,#fx{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#fx{pointer-events:none}
+.vignette{position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.55))}
+
+.osd{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:12px;
+  padding-top:calc(12px + env(safe-area-inset-top,0px));padding-bottom:12px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  font:500 13px/1 var(--mono);letter-spacing:.08em;text-shadow:0 1px 2px #000}
+.rec{display:flex;align-items:center;gap:7px;color:var(--ink)}
+.rec i{width:10px;height:10px;border-radius:50%;background:var(--rec);animation:blink 1s steps(1) infinite}
+.paused .rec i{animation:none;opacity:.35}
+@keyframes blink{50%{opacity:.15}}
+.osd .sp{flex:1}
+.badge{padding:5px 8px;border-radius:6px;background:var(--glass);border:1px solid var(--faint);font-size:11px;letter-spacing:.06em}
+
+#panel{position:absolute;left:0;right:0;bottom:0;background:var(--glass);
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-top:1px solid var(--faint);
+  padding-top:10px;padding-bottom:calc(14px + env(safe-area-inset-bottom,0px));
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  display:grid;gap:12px}
+.panel-head{display:flex;align-items:baseline;gap:14px}
+.fps{font:600 40px/1 var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.fps small{font-size:13px;font-weight:500;color:var(--dim);letter-spacing:.06em;margin-left:4px}
+.panel-head .sp{flex:1}
+.ghostbtn{background:none;border:1px solid var(--faint);border-radius:8px;padding:7px 10px;font:500 12px var(--mono);letter-spacing:.04em;cursor:pointer}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 12px;margin:0}
+.stats div{min-width:0}
+.stats dt{font:500 10px/1.2 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.stats dd{margin:3px 0 0;font:500 14px/1.2 var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row{display:grid;gap:6px}
+.row>span{font:500 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg button{flex:1 1 auto;min-width:56px;padding:9px 8px;border-radius:8px;border:1px solid var(--faint);background:transparent;font:500 13px var(--mono);cursor:pointer;font-variant-numeric:tabular-nums}
+.seg button[aria-pressed="true"]{background:var(--ink);color:#0a0a0a;border-color:var(--ink)}
+input[type=range]{width:100%;accent-color:var(--amber)}
+.actions{display:flex;gap:8px}
+.actions button{flex:1;padding:11px;border-radius:10px;border:1px solid var(--faint);background:transparent;font:500 13px var(--mono);cursor:pointer}
+.actions button.main{background:var(--amber);color:#0a0a0a;border-color:var(--amber)}
+#toast{position:absolute;left:50%;bottom:calc(100% + 10px);transform:translateX(-50%);padding:8px 12px;border-radius:8px;background:var(--ink);color:#0a0a0a;font:500 12px var(--mono);white-space:nowrap}
+#copybox{width:100%;height:120px;background:#0d0f12;color:var(--ink);border:1px solid var(--faint);border-radius:8px;font:12px var(--mono);padding:8px}
+.collapsed .stats,.collapsed .row,.collapsed .actions,.collapsed #copybox{display:none}
+@media (prefers-reduced-motion:reduce){.rec i{animation:none}}
+</style>
+</head>
+<body>
+
+<section id="intro">
+  <div class="card">
+    <div class="eyebrow"><i></i>Test hardware · caccia al fantasma</div>
+    <h1>Quanto regge il tuo telefono la profondità dal vivo?</h1>
+    <p class="lead">Questa pagina usa la fotocamera posteriore e stima la profondità della scena con Depth Anything V2 Small, tutto in locale nel browser. Misura i fotogrammi al secondo e prova a nascondere una sagoma dietro gli oggetti reali.</p>
+
+    <div class="checks" id="checks">
+      <div><span>Contesto sicuro (HTTPS)</span><span id="ck-https">--</span></div>
+      <div><span>Fotocamera</span><span id="ck-cam">--</span></div>
+      <div><span>WebGPU</span><span id="ck-gpu">verifica...</span></div>
+      <div><span>Mezza precisione (f16)</span><span id="ck-f16">--</span></div>
+    </div>
+
+    <label class="field" for="dtype">Precisione del modello
+      <select id="dtype">
+        <option value="auto">Automatica</option>
+        <option value="fp16">fp16 · 50 MB</option>
+        <option value="q4f16">q4f16 · 19 MB, più leggero</option>
+        <option value="fp32">fp32 · 99 MB, più lento</option>
+      </select>
+    </label>
+
+    <button class="primary" id="start">Avvia fotocamera e modello</button>
+    <div class="progress" aria-hidden="true"><b id="bar"></b></div>
+    <p id="status" role="status"></p>
+    <p class="note">Il modello si scarica una volta sola e resta in cache. La prima inferenza è lenta perché compila gli shader: i numeri si stabilizzano dopo qualche secondo. Lascialo girare almeno 2 minuti per vedere se il telefono scalda e rallenta.</p>
+  </div>
+</section>
+
+<main id="stage" hidden>
+  <video id="cam" playsinline muted autoplay></video>
+  <canvas id="fx"></canvas>
+  <div class="vignette"></div>
+
+  <header class="osd" id="osd">
+    <span class="rec"><i></i>REC</span>
+    <span id="clock">00:00</span>
+    <span class="sp"></span>
+    <span class="badge" id="badge">--</span>
+  </header>
+
+  <section id="panel">
+    <div id="toast" hidden>Risultati copiati</div>
+    <div class="panel-head">
+      <div class="fps"><span id="fps">--</span><small>FPS</small></div>
+      <span class="sp"></span>
+      <button class="ghostbtn" id="collapse" aria-expanded="true">Riduci</button>
+    </div>
+
+    <dl class="stats">
+      <div><dt>Inferenza</dt><dd id="s-inf">--</dd></div>
+      <div><dt>Primi 20 s</dt><dd id="s-first">--</dd></div>
+      <div><dt>Ultimi 20 s</dt><dd id="s-last">--</dd></div>
+      <div><dt>Input</dt><dd id="s-res">--</dd></div>
+      <div><dt>Prep. frame</dt><dd id="s-prep">--</dd></div>
+      <div><dt>Modello</dt><dd id="s-load">--</dd></div>
+    </dl>
+
+    <div class="row">
+      <span>Vista</span>
+      <div class="seg" id="modes">
+        <button data-mode="depth" aria-pressed="false">Profondità</button>
+        <button data-mode="mix" aria-pressed="true">Mix</button>
+        <button data-mode="ghost" aria-pressed="false">Presenza</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <span>Risoluzione input (lato corto, px)</span>
+      <div class="seg" id="sizes">
+        <button data-size="168" aria-pressed="false">168</button>
+        <button data-size="252" aria-pressed="true">252</button>
+        <button data-size="336" aria-pressed="false">336</button>
+        <button data-size="434" aria-pressed="false">434</button>
+        <button data-size="518" aria-pressed="false">518</button>
+      </div>
+    </div>
+
+    <div class="row" id="ghostrow" hidden>
+      <span>Distanza della presenza: <b id="gd-val">media</b></span>
+      <input type="range" id="gdist" min="5" max="95" value="55" aria-label="Distanza della presenza">
+    </div>
+
+    <div class="actions">
+      <button id="pause">Pausa</button>
+      <button id="copy" class="main">Copia risultati</button>
+    </div>
+    <textarea id="copybox" readonly hidden></textarea>
+  </section>
+</main>
+
+<script>
+setTimeout(function () {
+  if (!window.__depthReady) {
+    document.getElementById('status').textContent = 'La libreria non si è caricata: controlla la connessione o che il browser supporti i moduli JavaScript.';
+    document.getElementById('start').disabled = true;
+  }
+}, 12000);
+</script>
+<script type="module">
+import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1';
+env.allowLocalModels = false;
+
+const MODEL_ID = 'onnx-community/depth-anything-v2-small';
+const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
+const $ = id => document.getElementById(id);
+
+const S = {
+  model: null, backend: '', dtype: '', gpu: null,
+  short: 252, mode: 'mix', gdist: 55, paused: false,
+  W: 0, H: 0, vw: 0, vh: 0, lo: null, hi: null,
+  warm: 4, samples: [], segStart: 0, sessionStart: 0, loadSec: 0,
+  infEma: null, prepEma: null, lastIter: 0, byRes: {}, buf: null
+};
+
+/* ---------- controlli iniziali ---------- */
+const httpsOk = window.isSecureContext;
+$('ck-https').textContent = httpsOk ? 'ok' : 'no, serve HTTPS';
+$('ck-https').className = httpsOk ? 'good' : 'bad';
+const camOk = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+$('ck-cam').textContent = camOk ? 'disponibile' : 'non disponibile';
+$('ck-cam').className = camOk ? 'good' : 'bad';
+
+async function probeGPU() {
+  if (!('gpu' in navigator)) return { ok: false };
+  try {
+    const a = await navigator.gpu.requestAdapter();
+    if (!a) return { ok: false };
+    const i = a.info || {};
+    return { ok: true, f16: a.features.has('shader-f16'),
+      info: [i.vendor, i.architecture, i.device, i.description].filter(Boolean).join(' ') || 'n/d' };
+  } catch { return { ok: false }; }
+}
+S.gpu = await probeGPU();
+$('ck-gpu').textContent = S.gpu.ok ? 'attivo' : 'assente, uso WASM (lento)';
+$('ck-gpu').className = S.gpu.ok ? 'good' : 'warn';
+$('ck-f16').textContent = !S.gpu.ok ? 'n/d' : (S.gpu.f16 ? 'supportata' : 'no, uso fp32');
+$('ck-f16').className = !S.gpu.ok ? '' : (S.gpu.f16 ? 'good' : 'warn');
+if (!S.gpu.ok) { $('dtype').disabled = true; }
+window.__depthReady = true;
+
+function pickConfig() {
+  if (!S.gpu.ok) return { device: 'wasm', dtype: 'q8' };
+  let d = $('dtype').value;
+  if (d === 'auto') d = S.gpu.f16 ? 'fp16' : 'fp32';
+  if (!S.gpu.f16 && d !== 'fp32') d = 'fp32';
+  return { device: 'webgpu', dtype: d };
+}
+
+/* ---------- avvio ---------- */
+const cam = $('cam');
+$('start').addEventListener('click', async () => {
+  const btn = $('start'); btn.disabled = true;
+  const status = m => { $('status').textContent = m; };
+  try {
+    if (!httpsOk) throw new Error('La pagina deve essere aperta in HTTPS per usare la fotocamera.');
+    status('Richiesta accesso alla fotocamera...');
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    cam.srcObject = stream;
+    await cam.play();
+    try { await navigator.wakeLock?.request('screen'); } catch {}
+
+    const cfg = pickConfig();
+    S.backend = cfg.device; S.dtype = cfg.dtype;
+    status(`Download modello (${cfg.dtype})...`);
+    const files = {};
+    const t0 = performance.now();
+    S.model = await AutoModel.from_pretrained(MODEL_ID, {
+      device: cfg.device, dtype: cfg.dtype,
+      progress_callback: p => {
+        if (p.status === 'progress' && p.total) {
+          files[p.file] = [p.loaded, p.total];
+          let l = 0, t = 0; for (const k in files) { l += files[k][0]; t += files[k][1]; }
+          $('bar').style.width = (100 * l / t).toFixed(1) + '%';
+          status(`Download modello: ${(l / 1e6).toFixed(1)} / ${(t / 1e6).toFixed(1)} MB`);
+        } else if (p.status === 'ready') {
+          status('Preparazione sul processore grafico...');
+        }
+      }
+    });
+    S.loadSec = (performance.now() - t0) / 1000;
+    $('bar').style.width = '100%';
+
+    $('intro').hidden = true;
+    $('stage').hidden = false;
+    $('badge').textContent = `${cfg.device.toUpperCase()} · ${cfg.dtype}`;
+    $('s-load').textContent = S.loadSec.toFixed(1) + ' s';
+    S.sessionStart = performance.now();
+    resetSegment();
+    loop();
+    tickClock();
+  } catch (e) {
+    console.error(e);
+    status('Errore: ' + (e && e.message ? e.message : e));
+    btn.disabled = false;
+  }
+});
+
+/* ---------- canvas ---------- */
+const grab = document.createElement('canvas');
+const gctx = grab.getContext('2d', { willReadFrequently: true });
+const depthCv = document.createElement('canvas');
+const dctx = depthCv.getContext('2d');
+const fx = $('fx');
+const fctx = fx.getContext('2d');
+const layer = document.createElement('canvas');
+const lctx = layer.getContext('2d');
+
+const r14 = x => Math.max(14, Math.round(x / 14) * 14);
+function fitSize() {
+  const vw = cam.videoWidth, vh = cam.videoHeight;
+  if (!vw || !vh) return false;
+  if (vw === S.vw && vh === S.vh && S.W && grab.height === S.H && Math.min(S.W, S.H) === S.short) return true;
+  S.vw = vw; S.vh = vh;
+  const s = S.short;
+  if (vw >= vh) { S.H = s; S.W = r14(s * vw / vh); } else { S.W = s; S.H = r14(s * vh / vw); }
+  grab.width = S.W; grab.height = S.H;
+  $('s-res').textContent = `${S.W}×${S.H}`;
+  return true;
+}
+
+function toTensor() {
+  gctx.drawImage(cam, 0, 0, S.W, S.H);
+  const px = gctx.getImageData(0, 0, S.W, S.H).data;
+  const n = S.W * S.H;
+  if (!S.buf || S.buf.length !== 3 * n) S.buf = new Float32Array(3 * n);
+  const f = S.buf;
+  for (let i = 0, j = 0; i < n; i++, j += 4) {
+    f[i]         = (px[j]     / 255 - MEAN[0]) / STD[0];
+    f[i + n]     = (px[j + 1] / 255 - MEAN[1]) / STD[1];
+    f[i + 2 * n] = (px[j + 2] / 255 - MEAN[2]) / STD[2];
+  }
+  return new Tensor('float32', f, [1, 3, S.H, S.W]);
+}
+
+function halfToFloat(h) {
+  const s = (h & 0x8000) ? -1 : 1, e = (h >> 10) & 0x1f, m = h & 0x3ff;
+  if (e === 0) return s * Math.pow(2, -14) * (m / 1024);
+  if (e === 31) return m ? NaN : s * Infinity;
+  return s * Math.pow(2, e - 15) * (1 + m / 1024);
+}
+
+/* Mappa colori: lontano scuro, vicino caldo */
+const LUT = (() => {
+  const stops = [[0, [8, 6, 18]], [.3, [72, 18, 98]], [.55, [176, 46, 84]], [.8, [246, 128, 42]], [1, [252, 236, 160]]];
+  const out = new Uint8ClampedArray(256 * 3);
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255; let k = 0;
+    while (k < stops.length - 2 && t > stops[k + 1][0]) k++;
+    const [t0, c0] = stops[k], [t1, c1] = stops[k + 1];
+    const u = (t - t0) / (t1 - t0);
+    for (let c = 0; c < 3; c++) out[i * 3 + c] = c0[c] + (c1[c] - c0[c]) * u;
+  }
+  return out;
+})();
+
+/* Sagoma procedurale, disegnata una volta */
+const ghost = (() => {
+  const c = document.createElement('canvas'); c.width = 220; c.height = 440;
+  const g = c.getContext('2d');
+  const blob = (x, y, rx, ry, a) => {
+    const gr = g.createRadialGradient(x, y, 0, x, y, 1);
+    gr.addColorStop(0, `rgba(4,3,6,${a})`); gr.addColorStop(.65, `rgba(4,3,6,${a * .8})`); gr.addColorStop(1, 'rgba(4,3,6,0)');
+    g.save(); g.translate(x, y); g.scale(rx, ry); g.translate(-x, -y);
+    g.fillStyle = gr; g.beginPath(); g.arc(x, y, 1, 0, Math.PI * 2); g.fill(); g.restore();
+  };
+  blob(110, 72, 34, 44, .95);                 // testa
+  blob(110, 122, 22, 20, .9);                 // collo
+  for (let y = 150; y <= 420; y += 8) {        // busto e veste
+    const t = (y - 150) / 270;
+    const w = 78 - 26 * Math.sin(t * Math.PI * .5) + 8 * Math.sin(t * 9);
+    blob(110, y, w, 26, .82 - .45 * t);
+  }
+  blob(44, 230, 16, 96, .55);                  // braccia lunghe
+  blob(176, 236, 16, 100, .55);
+  g.fillStyle = 'rgba(225,222,210,.55)';      // occhi appena visibili
+  g.beginPath(); g.ellipse(97, 70, 4, 2.2, 0, 0, Math.PI * 2); g.ellipse(123, 70, 4, 2.2, 0, 0, Math.PI * 2); g.fill();
+  return c;
+})();
+
+function render(pd, now) {
+  const dims = pd.dims, oh = dims[dims.length - 2], ow = dims[dims.length - 1];
+  let d = pd.data;
+  if (d instanceof Uint16Array) { const f = new Float32Array(d.length); for (let i = 0; i < d.length; i++) f[i] = halfToFloat(d[i]); d = f; }
+  let mn = Infinity, mx = -Infinity;
+  for (let i = 0; i < d.length; i++) { const v = d[i]; if (v < mn) mn = v; if (v > mx) mx = v; }
+  S.lo = S.lo == null ? mn : S.lo * .85 + mn * .15;
+  S.hi = S.hi == null ? mx : S.hi * .85 + mx * .15;
+  const inv = 1 / Math.max(1e-6, S.hi - S.lo);
+
+  if (depthCv.width !== ow || depthCv.height !== oh) { depthCv.width = ow; depthCv.height = oh; }
+  const img = dctx.createImageData(ow, oh), p = img.data;
+
+  const fw = ow * 2, fh = oh * 2;
+  if (fx.width !== fw || fx.height !== fh) { fx.width = fw; fx.height = fh; layer.width = fw; layer.height = fh; }
+  fctx.clearRect(0, 0, fw, fh);
+
+  if (S.mode === 'ghost') {
+    const g = 1 - S.gdist / 100;               // vicinanza della sagoma, 1 = vicinissima
+    for (let i = 0, j = 0; i < d.length; i++, j += 4) {
+      const v = Math.min(1, Math.max(0, (d[i] - S.lo) * inv));
+      const a = Math.min(1, Math.max(0, (g - v) / .07 + .5));
+      p[j] = p[j + 1] = p[j + 2] = 255; p[j + 3] = a * 255;
+    }
+    dctx.putImageData(img, 0, 0);
+    const scale = .95 - .55 * (S.gdist / 100);
+    const gh = fh * scale, gw = gh * ghost.width / ghost.height;
+    const sway = Math.sin(now / 900) * fw * .006;
+    const gx = fw / 2 - gw / 2 + sway, gy = fh * .9 - gh;
+    lctx.globalCompositeOperation = 'source-over';
+    lctx.clearRect(0, 0, fw, fh);
+    lctx.globalAlpha = .82 + Math.random() * .16;
+    lctx.drawImage(ghost, gx, gy, gw, gh);
+    lctx.globalAlpha = 1;
+    lctx.globalCompositeOperation = 'destination-in';
+    lctx.imageSmoothingEnabled = true;
+    lctx.drawImage(depthCv, 0, 0, fw, fh);
+    fctx.drawImage(layer, 0, 0);
+  } else {
+    for (let i = 0, j = 0; i < d.length; i++, j += 4) {
+      const k = Math.min(255, Math.max(0, ((d[i] - S.lo) * inv * 255) | 0)) * 3;
+      p[j] = LUT[k]; p[j + 1] = LUT[k + 1]; p[j + 2] = LUT[k + 2]; p[j + 3] = 255;
+    }
+    dctx.putImageData(img, 0, 0);
+    fctx.globalAlpha = S.mode === 'mix' ? .55 : 1;
+    fctx.imageSmoothingEnabled = true;
+    fctx.drawImage(depthCv, 0, 0, fw, fh);
+    fctx.globalAlpha = 1;
+  }
+}
+
+/* ---------- ciclo ---------- */
+const nextFrame = () => new Promise(r => requestAnimationFrame(r));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function loop() {
+  while (true) {
+    if (S.paused || document.hidden || !fitSize()) { S.lastIter = 0; await sleep(120); continue; }
+    const t0 = performance.now();
+    const x = toTensor();
+    const t1 = performance.now();
+    let out;
+    try { out = await S.model({ pixel_values: x }); }
+    catch (e) { console.error(e); $('fps').textContent = 'ERR'; $('s-inf').textContent = String(e.message || e).slice(0, 40); await sleep(1000); continue; }
+    const t2 = performance.now();
+    render(out.predicted_depth, t2);
+    const t3 = performance.now();
+
+    if (S.lastIter && S.warm <= 0) {
+      const dt = t3 - S.lastIter;
+      S.samples.push({ t: t3, dt });
+      S.infEma = S.infEma == null ? (t2 - t1) : S.infEma * .9 + (t2 - t1) * .1;
+      S.prepEma = S.prepEma == null ? (t1 - t0) : S.prepEma * .9 + (t1 - t0) * .1;
+      updateStats(t3);
+    } else if (S.warm > 0) {
+      S.warm--;
+      if (S.warm === 0) S.segStart = t3;
+      $('fps').textContent = '..';
+    }
+    S.lastIter = t3;
+    await nextFrame();
+  }
+}
+
+const avgFps = arr => arr.length ? 1000 / (arr.reduce((a, b) => a + b.dt, 0) / arr.length) : null;
+const fmt = v => v == null ? '--' : v.toFixed(1);
+
+function updateStats(now) {
+  const recent = S.samples.filter(s => now - s.t < 1500);
+  $('fps').textContent = fmt(avgFps(recent));
+  $('s-inf').textContent = S.infEma.toFixed(0) + ' ms';
+  $('s-prep').textContent = S.prepEma.toFixed(0) + ' ms';
+  const first = S.samples.filter(s => s.t - S.segStart < 20000);
+  $('s-first').textContent = fmt(avgFps(first));
+  const last = S.samples.filter(s => now - s.t < 20000);
+  $('s-last').textContent = (now - S.segStart > 25000) ? fmt(avgFps(last)) : 'attendi';
+  if (S.samples.length > 6000) S.samples.splice(0, 1000);
+  S.byRes[S.short] = { res: `${S.W}×${S.H}`, fps: avgFps(S.samples), inf: S.infEma, secs: (now - S.segStart) / 1000 };
+}
+
+function resetSegment() {
+  S.samples = []; S.warm = 4; S.infEma = null; S.prepEma = null; S.lastIter = 0;
+  S.segStart = performance.now(); // aggiornato a fine riscaldamento
+  ['s-first', 's-last'].forEach(id => $(id).textContent = '--');
+}
+
+function tickClock() {
+  const s = Math.floor((performance.now() - S.sessionStart) / 1000);
+  $('clock').textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+  setTimeout(tickClock, 500);
+}
+
+/* ---------- interfaccia ---------- */
+function pressGroup(group, attr, val) {
+  group.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset[attr] === String(val))));
+}
+$('modes').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  S.mode = b.dataset.mode; pressGroup($('modes'), 'mode', S.mode);
+  $('ghostrow').hidden = S.mode !== 'ghost';
+});
+$('sizes').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const v = +b.dataset.size; if (v === S.short) return;
+  S.short = v; pressGroup($('sizes'), 'size', v); S.vw = 0; resetSegment();
+});
+const gdLabel = v => v < 30 ? 'vicina' : v < 65 ? 'media' : 'lontana';
+$('gdist').addEventListener('input', e => { S.gdist = +e.target.value; $('gd-val').textContent = gdLabel(S.gdist); });
+$('pause').addEventListener('click', () => {
+  S.paused = !S.paused;
+  $('pause').textContent = S.paused ? 'Riprendi' : 'Pausa';
+  $('stage').classList.toggle('paused', S.paused);
+  if (!S.paused) S.lastIter = 0;
+});
+$('collapse').addEventListener('click', () => {
+  const c = $('panel').classList.toggle('collapsed');
+  $('collapse').textContent = c ? 'Espandi' : 'Riduci';
+  $('collapse').setAttribute('aria-expanded', String(!c));
+});
+
+function report() {
+  const now = performance.now();
+  const lines = [
+    'TEST PROFONDITA · Depth Anything V2 Small',
+    'Dispositivo: ' + navigator.userAgent,
+    'GPU: ' + (S.gpu.ok ? S.gpu.info + (S.gpu.f16 ? ' · f16 ok' : ' · f16 no') : 'WebGPU assente'),
+    `Backend: ${S.backend} · ${S.dtype}`,
+    `Modello caricato in: ${S.loadSec.toFixed(1)} s`,
+    `Durata test: ${$('clock').textContent}`,
+    `Risoluzione attuale: ${S.W}×${S.H} · fps primi 20 s ${$('s-first').textContent} · ultimi 20 s ${$('s-last').textContent} · inferenza ${S.infEma ? S.infEma.toFixed(0) : '--'} ms`,
+    'Per risoluzione provata:'
+  ];
+  Object.keys(S.byRes).sort((a, b) => a - b).forEach(k => {
+    const r = S.byRes[k];
+    lines.push(`  ${r.res}: ${fmt(r.fps)} fps medi, inferenza ${r.inf ? r.inf.toFixed(0) : '--'} ms, su ${r.secs.toFixed(0)} s`);
+  });
+  return lines.join('\n');
+}
+$('copy').addEventListener('click', async () => {
+  const txt = report();
+  try {
+    await navigator.clipboard.writeText(txt);
+    $('toast').hidden = false; setTimeout(() => $('toast').hidden = true, 1600);
+  } catch {
+    const box = $('copybox'); box.hidden = false; box.value = txt; box.focus(); box.select();
+  }
+});
+</script>
+</body>
+</html>
