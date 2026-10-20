@@ -1,0 +1,616 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Test ARCore Presenza</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: schermata di avvio, poi sessione AR con OSD sopra e comandi sotto (DOM overlay) */
+:root{
+  --bg:#060708;
+  --ink:#ebe7dc;
+  --dim:rgba(235,231,220,.6);
+  --faint:rgba(235,231,220,.16);
+  --glass:rgba(8,9,11,.74);
+  --rec:#ff453a;
+  --amber:#ffbf47;
+  --ok:#7fd99a;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 var(--sans)}
+[hidden]{display:none!important}
+button{font:inherit;color:inherit}
+button:focus-visible,input:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+
+#intro{min-height:100%;display:grid;place-items:center;
+  padding-block:calc(24px + env(safe-area-inset-top,0px)) calc(24px + env(safe-area-inset-bottom,0px));
+  padding-left:max(18px,env(safe-area-inset-left,0px));padding-right:max(18px,env(safe-area-inset-right,0px))}
+.card{width:100%;max-width:440px;display:grid;gap:18px}
+.eyebrow{font:500 11px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--amber);display:flex;align-items:center;gap:8px}
+.eyebrow i{width:8px;height:8px;border-radius:50%;background:var(--rec);box-shadow:0 0 10px var(--rec)}
+h1{margin:0;font:600 26px/1.15 var(--mono);text-wrap:balance}
+.lead,.note{margin:0;color:var(--dim)} .note{font-size:13px}
+.checks{display:grid;gap:8px;padding:12px 14px;border:1px solid var(--faint);border-radius:10px;font:13px/1.4 var(--mono)}
+.checks div{display:flex;justify-content:space-between;gap:12px}
+.good{color:var(--ok)} .warn{color:var(--amber)} .bad{color:var(--rec)}
+.steps{margin:0;padding-left:20px;display:grid;gap:6px;color:var(--dim);font-size:14px}
+.primary{padding:15px 18px;border-radius:12px;border:0;background:var(--ink);color:#0a0a0a;font:600 15px var(--mono);cursor:pointer}
+.primary:disabled{opacity:.45;cursor:default}
+#status{margin:0;font:13px/1.4 var(--mono);color:var(--dim);min-height:1.4em}
+.feats{margin:0;padding:12px 14px;border:1px solid var(--faint);border-radius:10px;display:grid;gap:8px;font:13px var(--mono)}
+.feats legend{padding:0 6px;color:var(--dim);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+.feats label{display:flex;align-items:center;gap:10px}
+.feats input{width:18px;height:18px;accent-color:var(--amber)}
+#lastlog{margin:0;padding:10px 12px;border-radius:8px;border:1px solid var(--amber);color:var(--amber);font:12px/1.4 var(--mono);white-space:pre-wrap;word-break:break-word}
+
+/* ---------- overlay durante la sessione AR ---------- */
+#overlay{position:fixed;inset:0;pointer-events:none;font-family:var(--mono)}
+.osd{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:12px;
+  padding-top:calc(12px + env(safe-area-inset-top,0px));padding-bottom:10px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  font:500 13px/1 var(--mono);letter-spacing:.08em;text-shadow:0 1px 2px #000}
+.rec{display:flex;align-items:center;gap:7px}
+.rec i{width:10px;height:10px;border-radius:50%;background:var(--rec);animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:.15}}
+.osd .sp{flex:1}
+.badge{padding:5px 8px;border-radius:6px;background:var(--glass);border:1px solid var(--faint);font-size:11px}
+#hint{position:absolute;left:50%;top:42%;transform:translate(-50%,-50%);max-width:80%;text-align:center;
+  padding:10px 14px;border-radius:10px;background:var(--glass);font:500 13px/1.4 var(--mono);text-shadow:none}
+
+#hud{position:absolute;left:0;right:0;bottom:0;pointer-events:auto;background:var(--glass);
+  -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);border-top:1px solid var(--faint);
+  padding-top:10px;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px));
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  display:grid;gap:10px}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 12px;margin:0}
+.stats div{min-width:0}
+.stats dt{font:500 10px/1.2 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.stats dd{margin:3px 0 0;font:500 14px/1.2 var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.zoomrow{display:flex;align-items:center;gap:10px;font:500 12px var(--mono)}
+.zoomrow input{flex:1;min-width:0;accent-color:var(--amber)}
+.zoomrow b{min-width:44px;text-align:right;font-variant-numeric:tabular-nums}
+.zoomrow button{padding:6px 9px;border-radius:7px;border:1px solid var(--faint);background:transparent;font:500 12px var(--mono);cursor:pointer}
+.zoomrow button[aria-pressed="true"]{background:var(--ink);color:#0a0a0a}
+.toggles{display:flex;gap:6px;flex-wrap:wrap}
+.toggles button{flex:1 1 auto;padding:9px 8px;border-radius:8px;border:1px solid var(--faint);background:transparent;font:500 12px var(--mono);cursor:pointer}
+.toggles button[aria-pressed="true"]{background:var(--ink);color:#0a0a0a;border-color:var(--ink)}
+.toggles button.exit{flex:0 0 auto;border-color:var(--rec);color:var(--rec)}
+#err{margin:0;padding:8px 10px;border-radius:8px;border:1px solid var(--rec);color:var(--rec);font:12px/1.35 var(--mono);word-break:break-word}
+</style>
+</head>
+<body>
+
+<section id="intro">
+  <div class="card">
+    <div class="eyebrow"><i></i>Test ARCore · caccia al fantasma</div>
+    <h1>La presenza resta nella stanza?</h1>
+    <p class="lead">Questa pagina usa WebXR e ARCore di Chrome Android: tracking reale della stanza e profondità di Google per nascondere la sagoma dietro gli oggetti veri.</p>
+
+    <div class="checks">
+      <div><span>Contesto sicuro (HTTPS)</span><span id="ck-https">--</span></div>
+      <div><span>WebXR</span><span id="ck-xr">verifica...</span></div>
+      <div><span>Realtà aumentata</span><span id="ck-ar">verifica...</span></div>
+    </div>
+
+    <ol class="steps">
+      <li>Inquadra il pavimento e muovi piano il telefono finché compare l'anello.</li>
+      <li>Tocca lo schermo per piazzare la presenza, meglio vicino a una porta o dietro un mobile.</li>
+      <li>Girati dall'altra parte e poi torna a guardarla: si sarà avvicinata.</li>
+    </ol>
+
+    <fieldset class="feats">
+      <legend>Funzioni da attivare (per trovare quella che blocca)</legend>
+      <label><input type="checkbox" id="f-hit" checked> Rilevamento pavimento</label>
+      <label><input type="checkbox" id="f-depth" checked> Profondità ARCore</label>
+      <label><input type="checkbox" id="f-overlay" checked> Pannello sopra l'AR</label>
+      <label><input type="checkbox" id="f-cam"> Zoom (accesso fotocamera)</label>
+      <label><input type="checkbox" id="f-render" checked> Disegno 3D</label>
+    </fieldset>
+
+    <button class="primary" id="start" disabled>Entra in AR</button>
+    <pre id="lastlog" hidden></pre>
+    <p id="status" role="status"></p>
+    <p class="note">Se si blocca: esci con il tasto indietro, il riepilogo dell'ultima sessione compare qui sopra. Poi riprova togliendo una funzione alla volta. In AR l'obiettivo lo sceglie ARCore (sempre la fotocamera principale, l'unica calibrata per il tracking). Lo zoom qui è digitale: ingrandisce l'immagine e la scena 3D insieme, così la presenza resta allineata.</p>
+  </div>
+</section>
+
+<div id="overlay" hidden>
+  <header class="osd">
+    <span class="rec"><i></i>REC</span>
+    <span id="clock">00:00</span>
+    <span class="sp"></span>
+    <span class="badge" id="badge">ARCORE</span>
+  </header>
+  <div id="hint">Inquadra il pavimento e muovi piano il telefono</div>
+
+  <section id="hud">
+    <p id="err" hidden></p>
+    <dl class="stats">
+      <div><dt>FPS</dt><dd id="s-fps">--</dd></div>
+      <div><dt>Profondità</dt><dd id="s-depth">--</dd></div>
+      <div><dt>Distanza</dt><dd id="s-dist">--</dd></div>
+      <div><dt>Formato</dt><dd id="s-fmt">--</dd></div>
+      <div><dt>Spostamenti</dt><dd id="s-moves">0</dd></div>
+      <div><dt>Tracking</dt><dd id="s-track">--</dd></div>
+    </dl>
+    <div class="zoomrow" id="zoomrow" hidden>
+      <span>Zoom</span>
+      <input type="range" id="zoom" min="1" max="3" step="0.05" value="1" aria-label="Zoom digitale">
+      <b id="zoom-val">1.0×</b>
+      <button id="zoom-flip" aria-pressed="false" aria-label="Capovolgi immagine zoom">↕</button>
+    </div>
+    <div class="toggles">
+      <button id="t-approach" aria-pressed="true">Si avvicina</button>
+      <button id="t-debug" aria-pressed="false">Vedi profondità</button>
+      <button id="t-flip" aria-pressed="false">Inverti Y</button>
+      <button id="t-exit" class="exit">Esci</button>
+    </div>
+  </section>
+</div>
+
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js';
+
+const $ = id => document.getElementById(id);
+const setStatus = m => { $('status').textContent = m; };
+
+/* ---------- controlli iniziali ---------- */
+$('ck-https').textContent = isSecureContext ? 'ok' : 'no, serve HTTPS';
+$('ck-https').className = isSecureContext ? 'good' : 'bad';
+let arOk = false;
+if (navigator.xr) {
+  $('ck-xr').textContent = 'presente'; $('ck-xr').className = 'good';
+  try { arOk = await navigator.xr.isSessionSupported('immersive-ar'); } catch {}
+  $('ck-ar').textContent = arOk ? 'supportata' : 'non supportata';
+  $('ck-ar').className = arOk ? 'good' : 'bad';
+} else {
+  $('ck-xr').textContent = 'assente'; $('ck-xr').className = 'bad';
+  $('ck-ar').textContent = 'n/d';
+}
+$('start').disabled = !arOk;
+if (!arOk) setStatus('Questo browser non offre la realtà aumentata WebXR. Prova con Chrome su Android.');
+
+/* ---------- scena three.js ---------- */
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(innerWidth, innerHeight);
+renderer.xr.enabled = true;
+renderer.xr.setReferenceSpaceType('local');
+renderer.domElement.style.cssText = 'position:fixed;inset:0;display:none';
+document.body.appendChild(renderer.domElement);
+const gl = renderer.getContext();
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 30);
+
+const reticle = new THREE.Mesh(
+  new THREE.RingGeometry(0.11, 0.14, 40).rotateX(-Math.PI / 2),
+  new THREE.MeshBasicMaterial({ color: 0xffbf47, transparent: true, opacity: .85 })
+);
+reticle.matrixAutoUpdate = false; reticle.visible = false;
+scene.add(reticle);
+
+function makeGhostTexture() {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 616;
+  const g = c.getContext('2d');
+  const k = 256 / 220;
+  g.scale(k, k);
+  const blob = (x, y, rx, ry, a) => {
+    const gr = g.createRadialGradient(x, y, 0, x, y, 1);
+    gr.addColorStop(0, `rgba(4,3,6,${a})`); gr.addColorStop(.65, `rgba(4,3,6,${a * .8})`); gr.addColorStop(1, 'rgba(4,3,6,0)');
+    g.save(); g.translate(x, y); g.scale(rx, ry); g.translate(-x, -y);
+    g.fillStyle = gr; g.beginPath(); g.arc(x, y, 1, 0, Math.PI * 2); g.fill(); g.restore();
+  };
+  blob(110, 66, 32, 42, .96);
+  blob(110, 114, 21, 20, .9);
+  for (let y = 140; y <= 520; y += 8) {
+    const t = (y - 140) / 380;
+    const w = 76 - 24 * Math.sin(t * Math.PI * .5) + 7 * Math.sin(t * 11);
+    blob(110, y, w, 26, .84 - .5 * t);
+  }
+  blob(42, 250, 15, 120, .55);
+  blob(178, 256, 15, 124, .55);
+  g.fillStyle = 'rgba(225,222,210,.6)';
+  g.beginPath(); g.ellipse(97, 64, 4, 2.2, 0, 0, Math.PI * 2); g.ellipse(123, 64, 4, 2.2, 0, 0, Math.PI * 2); g.fill();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/* Profondità reale: texture a mezza precisione in metri */
+let depthTex = new THREE.DataTexture(new Uint16Array(1), 1, 1, THREE.RedFormat, THREE.HalfFloatType);
+const depthUniforms = {
+  uDepth: { value: depthTex },
+  uDepthMat: { value: new THREE.Matrix4() },
+  uViewport: { value: new THREE.Vector2(1, 1) },
+  uHasDepth: { value: 0 },
+  uFlipY: { value: 0 },
+  uZoom: { value: 1 }
+};
+
+const SAMPLE_DEPTH = `
+  uniform sampler2D uDepth; uniform mat4 uDepthMat; uniform vec2 uViewport;
+  uniform float uHasDepth; uniform float uFlipY; uniform float uZoom;
+  float realDepth() {
+    vec2 v = gl_FragCoord.xy / uViewport;
+    v = 0.5 + (v - 0.5) / uZoom;
+    v.y = mix(1.0 - v.y, v.y, uFlipY);
+    vec2 d = (uDepthMat * vec4(v, 0.0, 1.0)).xy;
+    return texture2D(uDepth, d).r;
+  }
+`;
+
+const ghostMat = new THREE.ShaderMaterial({
+  transparent: true, depthWrite: false,
+  uniforms: { map: { value: makeGhostTexture() }, uOpacity: { value: 1 }, ...depthUniforms },
+  vertexShader: `
+    varying vec2 vUv; varying float vViewZ;
+    void main() {
+      vUv = uv;
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      vViewZ = -mv.z;
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: `
+    uniform sampler2D map; uniform float uOpacity;
+    varying vec2 vUv; varying float vViewZ;
+    ${SAMPLE_DEPTH}
+    void main() {
+      vec4 c = texture2D(map, vUv);
+      float vis = 1.0;
+      if (uHasDepth > 0.5) {
+        float real = realDepth();
+        if (real > 0.01) vis = smoothstep(-0.06, 0.06, real - vViewZ);
+      }
+      gl_FragColor = vec4(c.rgb, c.a * vis * uOpacity);
+    }`
+});
+const ghost = new THREE.Mesh(new THREE.PlaneGeometry(0.75, 1.8).translate(0, 0.9, 0), ghostMat);
+ghost.visible = false;
+scene.add(ghost);
+
+const debugMat = new THREE.ShaderMaterial({
+  transparent: true, depthTest: false, depthWrite: false,
+  uniforms: depthUniforms,
+  vertexShader: `void main(){ gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+  fragmentShader: `
+    ${SAMPLE_DEPTH}
+    void main() {
+      if (uHasDepth < 0.5) discard;
+      float r = realDepth();
+      if (r <= 0.01) discard;
+      float t = clamp(r / 4.0, 0.0, 1.0);
+      vec3 near = vec3(1.0, 0.75, 0.28), far = vec3(0.12, 0.05, 0.3);
+      gl_FragColor = vec4(mix(near, far, t), 0.55);
+    }`
+});
+const debugQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), debugMat);
+debugQuad.frustumCulled = false; debugQuad.renderOrder = 10; debugQuad.visible = false;
+scene.add(debugQuad);
+
+/* ---------- zoom digitale: immagine della fotocamera ridisegnata ingrandita ---------- */
+const camDraw = (() => {
+  let prog = null, buf = null, locT, locZ, locF, locP;
+  function init() {
+    const vs = `attribute vec2 p; varying vec2 uv; void main(){ uv = p * 0.5 + 0.5; gl_Position = vec4(p, 0.0, 1.0); }`;
+    const fs = `precision mediump float; varying vec2 uv; uniform sampler2D t; uniform float z; uniform float f;
+      void main(){ vec2 u = 0.5 + (uv - 0.5) / z; u.y = mix(u.y, 1.0 - u.y, f); gl_FragColor = vec4(texture2D(t, u).rgb, 1.0); }`;
+    const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error('shader: ' + gl.getShaderInfoLog(s)); return s; };
+    prog = gl.createProgram();
+    gl.attachShader(prog, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error('link: ' + gl.getProgramInfoLog(prog));
+    buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    locP = gl.getAttribLocation(prog, 'p'); locT = gl.getUniformLocation(prog, 't');
+    locZ = gl.getUniformLocation(prog, 'z'); locF = gl.getUniformLocation(prog, 'f');
+  }
+  return function draw(tex, layer, vp, zoom, flip) {
+    if (!prog) init();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+    gl.viewport(vp.x, vp.y, vp.width, vp.height);
+    gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND); gl.disable(gl.CULL_FACE);
+    gl.useProgram(prog);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.uniform1i(locT, 0); gl.uniform1f(locZ, zoom); gl.uniform1f(locF, flip ? 1 : 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.enableVertexAttribArray(locP);
+    gl.vertexAttribPointer(locP, 2, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.disableVertexAttribArray(locP);
+    renderer.resetState();
+  };
+})();
+
+/* ---------- sessione ---------- */
+let session = null, hitSource = null, startT = 0, glBinding = null;
+let frames = 0, fpsT = 0, moves = 0, uiT = 0;
+let outSince = 0, movedThisLook = false;
+const opts = { approach: true, debug: false, flip: false, zoom: 1, zoomFlip: false, zoomOk: false };
+
+/* ---------- diagnostica ---------- */
+const F = { hit: true, depth: true, overlay: true, cam: false, render: true };
+const D = { frames: 0, stage: '-', start: 0, feats: '', enabled: '', lastFrameAt: 0, lastSave: 0 };
+function step(name) {
+  D.stage = name;
+  if (D.frames < 400 || performance.now() - D.lastSave > 1000) saveLog();
+  return true;
+}
+function saveLog() {
+  D.lastSave = performance.now();
+  try {
+    localStorage.setItem('arlog', JSON.stringify({ frames: D.frames, stage: D.stage, feats: D.feats, enabled: D.enabled,
+      secs: D.start ? ((Date.now() - D.start) / 1000).toFixed(1) : '0', ua: navigator.userAgent }));
+  } catch {}
+}
+function showLastLog() {
+  let l = null;
+  try { l = JSON.parse(localStorage.getItem('arlog') || 'null'); } catch {}
+  if (!l) return;
+  $('lastlog').hidden = false;
+  $('lastlog').textContent = `Ultima sessione AR
+Richieste: ${l.feats}
+Attive: ${l.enabled || 'n/d'}
+Frame disegnati: ${l.frames} in ${l.secs} s
+Ultimo passo: ${l.stage}`;
+}
+showLastLog();
+setInterval(() => {
+  if (!session || !D.lastFrameAt) return;
+  const idle = (performance.now() - D.lastFrameAt) / 1000;
+  if (idle > 1.5) {
+    $('err').hidden = false;
+    $('err').textContent = `Il ciclo AR è fermo da ${idle.toFixed(0)} s dopo ${D.frames} frame. Ultimo passo: ${D.stage}. Esci con il tasto indietro e guarda il riepilogo.`;
+    saveLog();
+  }
+}, 500);
+
+function showError(where, e) {
+  console.error(where, e);
+  $('err').hidden = false;
+  $('err').textContent = `${where}: ${e && e.message ? e.message : e}`;
+}
+
+$('start').addEventListener('click', async () => {
+  $('start').disabled = true;
+  setStatus('Avvio della sessione...');
+  try {
+    F.hit = $('f-hit').checked; F.depth = $('f-depth').checked; F.overlay = $('f-overlay').checked;
+    F.cam = $('f-cam').checked; F.render = $('f-render').checked;
+    const optional = [];
+    if (F.hit) optional.push('hit-test');
+    if (F.depth) optional.push('depth-sensing');
+    if (F.overlay) optional.push('dom-overlay');
+    if (F.cam) optional.push('camera-access');
+    const init = { optionalFeatures: optional };
+    if (F.depth) init.depthSensing = { usagePreference: ['cpu-optimized'], dataFormatPreference: ['luminance-alpha', 'float32'] };
+    if (F.overlay) init.domOverlay = { root: $('overlay') };
+    D.frames = 0; D.lastFrameAt = 0; D.stage = 'richiesta sessione'; D.start = Date.now(); D.feats = optional.join(', ') || 'nessuna';
+    saveLog();
+    session = await navigator.xr.requestSession('immersive-ar', init);
+  } catch (e) {
+    setStatus('Impossibile avviare l\'AR: ' + (e.message || e));
+    $('start').disabled = false;
+    return;
+  }
+
+  try {
+    const feats = session.enabledFeatures ? Array.from(session.enabledFeatures) : [];
+    const hasDepth = feats.includes('depth-sensing') || !!session.depthUsage;
+    $('s-depth').textContent = hasDepth ? 'attiva' : 'non disponibile';
+    $('s-fmt').textContent = hasDepth ? (session.depthDataFormat || '--') : '--';
+    $('badge').textContent = hasDepth ? 'ARCORE · DEPTH' : 'ARCORE';
+
+    $('intro').hidden = true;
+    $('overlay').hidden = false;
+    $('err').hidden = true;
+    renderer.domElement.style.display = 'block';
+    await renderer.xr.setSession(session);
+
+    opts.zoomOk = feats.includes('camera-access') && typeof XRWebGLBinding !== 'undefined';
+    if (opts.zoomOk) {
+      try { glBinding = new XRWebGLBinding(session, gl); } catch (e) { opts.zoomOk = false; }
+    }
+    $('zoomrow').hidden = !opts.zoomOk;
+
+    if (F.hit && feats.includes('hit-test')) {
+      D.stage = 'avvio rilevamento pavimento'; saveLog();
+      const viewerSpace = await session.requestReferenceSpace('viewer');
+      hitSource = await session.requestHitTestSource({ space: viewerSpace });
+    } else {
+      $('hint').textContent = 'Tocca lo schermo: la presenza apparirà 2 metri davanti a te';
+    }
+    D.enabled = feats.join(', ') || 'nessuna';
+
+    session.addEventListener('select', placeGhost);
+    session.addEventListener('end', onEnd);
+    startT = performance.now(); fpsT = startT; uiT = 0; frames = 0; moves = 0;
+    $('s-moves').textContent = '0';
+    renderer.setAnimationLoop(onFrame);
+  } catch (e) {
+    showError('avvio', e);
+  }
+});
+
+$('hud').addEventListener('beforexrselect', e => e.preventDefault());
+
+function placeGhost() {
+  if (hitSource) {
+    if (!reticle.visible) return;
+    ghost.position.setFromMatrixPosition(reticle.matrix);
+  } else {
+    const c = renderer.xr.getCamera(), fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(c.quaternion);
+    fwd.y = 0; if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, -1); fwd.normalize();
+    c.getWorldPosition(ghost.position);
+    ghost.position.addScaledVector(fwd, 2); ghost.position.y -= 1.4;
+  }
+  ghost.visible = true;
+  movedThisLook = false; outSince = 0;
+  $('hint').hidden = true;
+}
+
+function onEnd() {
+  renderer.setAnimationLoop(null);
+  hitSource = null; session = null; glBinding = null;
+  ghost.visible = false; reticle.visible = false;
+  depthUniforms.uHasDepth.value = 0;
+  $('overlay').hidden = true;
+  renderer.domElement.style.display = 'none';
+  $('intro').hidden = false;
+  $('start').disabled = false;
+  $('hint').hidden = false;
+  $('hint').textContent = 'Inquadra il pavimento e muovi piano il telefono';
+  setStatus(`Sessione chiusa. La presenza si è spostata ${moves} volte.`);
+  D.stage += ' (sessione chiusa)'; saveLog(); showLastLog();
+}
+
+const camPos = new THREE.Vector3(), tmp = new THREE.Vector3(), ndc = new THREE.Vector3(), headOff = new THREE.Vector3(0, 0.9, 0);
+let depthLabel = '', distLabel = '--', trackLabel = '--', lastErrAt = 0;
+
+function updateDepth(frame, view) {
+  let info = null;
+  try { info = frame.getDepthInformation(view); } catch { info = null; }
+  if (!info || !info.data) { depthUniforms.uHasDepth.value = 0; return; }
+  const w = info.width, h = info.height;
+  if (depthTex.image.width !== w || depthTex.image.height !== h) {
+    depthTex.dispose();
+    depthTex = new THREE.DataTexture(new Uint16Array(w * h), w, h, THREE.RedFormat, THREE.HalfFloatType);
+    depthTex.magFilter = depthTex.minFilter = THREE.LinearFilter;
+    depthUniforms.uDepth.value = depthTex;
+    depthLabel = `${w}×${h}`;
+  }
+  const src = session.depthDataFormat === 'float32' ? new Float32Array(info.data) : new Uint16Array(info.data);
+  const k = info.rawValueToMeters, dst = depthTex.image.data, n = Math.min(dst.length, src.length);
+  for (let i = 0; i < n; i++) dst[i] = THREE.DataUtils.toHalfFloat(src[i] * k);
+  depthTex.needsUpdate = true;
+  depthUniforms.uDepthMat.value.fromArray(info.normDepthBufferFromNormView.matrix);
+  depthUniforms.uHasDepth.value = 1;
+}
+
+function applyZoomToCameras(xrCam, z) {
+  const list = (xrCam.cameras && xrCam.cameras.length) ? xrCam.cameras : [xrCam];
+  for (const c of list) {
+    c.projectionMatrix.elements[0] *= z;
+    c.projectionMatrix.elements[5] *= z;
+    c.projectionMatrixInverse.copy(c.projectionMatrix).invert();
+  }
+}
+
+function onFrame(t, frame) {
+  if (!frame || !session) return;
+  D.frames++; D.lastFrameAt = performance.now();
+  try {
+    step('posa');
+    const ref = renderer.xr.getReferenceSpace();
+    const pose = frame.getViewerPose(ref);
+    trackLabel = pose ? (pose.emulatedPosition ? 'parziale' : 'ok') : 'perso';
+
+    const layer = session.renderState.baseLayer;
+    if (layer) depthUniforms.uViewport.value.set(layer.framebufferWidth, layer.framebufferHeight);
+
+    if (pose && session.depthUsage) { step('profondità'); updateDepth(frame, pose.views[0]); }
+
+    /* zoom digitale */
+    const z = opts.zoomOk ? opts.zoom : 1;
+    depthUniforms.uZoom.value = z;
+    if (pose && z > 1.001 && glBinding && step('zoom') && layer && pose.views[0].camera) {
+      try {
+        const view = pose.views[0];
+        const tex = glBinding.getCameraImage(view.camera);
+        if (tex) camDraw(tex, layer, layer.getViewport(view), z, opts.zoomFlip);
+      } catch (e) { opts.zoomOk = false; $('zoomrow').hidden = true; showError('zoom', e); }
+    }
+
+    if (hitSource && pose) {
+      step('pavimento');
+      const hits = frame.getHitTestResults(hitSource);
+      const p = hits.length ? hits[0].getPose(ref) : null;
+      if (p) {
+        reticle.visible = true;
+        reticle.matrix.fromArray(p.transform.matrix);
+        if (!ghost.visible) $('hint').textContent = 'Tocca lo schermo per piazzare la presenza';
+      } else reticle.visible = false;
+    }
+
+    const xrCam = renderer.xr.getCamera();
+    if (z > 1.001) applyZoomToCameras(xrCam, z);
+    xrCam.getWorldPosition(camPos);
+
+    if (ghost.visible && pose) {
+      tmp.set(camPos.x, ghost.position.y, camPos.z);
+      ghost.lookAt(tmp);
+      const dist = ghost.position.distanceTo(tmp);
+      distLabel = dist.toFixed(2) + ' m';
+      ghostMat.uniforms.uOpacity.value = .86 + Math.random() * .12;
+
+      const eye = (xrCam.cameras && xrCam.cameras[0]) ? xrCam.cameras[0] : xrCam;
+      ndc.copy(ghost.position).add(headOff).project(eye);
+      const inView = ndc.z < 1 && Math.abs(ndc.x) < 1.15 && Math.abs(ndc.y) < 1.15;
+      if (inView) { outSince = 0; movedThisLook = false; }
+      else {
+        if (!outSince) outSince = t;
+        if (opts.approach && !movedThisLook && t - outSince > 600 && dist > 0.95) {
+          const dir = tmp.set(camPos.x, ghost.position.y, camPos.z).sub(ghost.position).normalize();
+          ghost.position.addScaledVector(dir, Math.min(dist - 0.8, dist * 0.4));
+          movedThisLook = true; moves++;
+        }
+      }
+    }
+
+    debugQuad.visible = opts.debug;
+    if (F.render) { step('disegno 3D'); renderer.render(scene, camera); }
+    step('frame completo');
+  } catch (e) {
+    if (t - lastErrAt > 1000) { showError('frame', e); lastErrAt = t; }
+  }
+
+  /* testo a schermo aggiornato 4 volte al secondo, non a ogni frame */
+  frames++;
+  if (t - uiT > 250) {
+    uiT = t;
+    $('s-track').textContent = trackLabel;
+    $('s-dist').textContent = distLabel;
+    $('s-moves').textContent = String(moves);
+    if (depthLabel) $('s-depth').textContent = depthLabel;
+  }
+  if (t - fpsT > 1000) {
+    $('s-fps').textContent = (frames * 1000 / (t - fpsT)).toFixed(0);
+    frames = 0; fpsT = t;
+    const s = Math.floor((performance.now() - startT) / 1000);
+    $('clock').textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+  }
+}
+
+/* ---------- comandi ---------- */
+function toggle(id, key, after) {
+  $(id).addEventListener('click', () => {
+    opts[key] = !opts[key];
+    $(id).setAttribute('aria-pressed', String(opts[key]));
+    if (after) after();
+  });
+}
+toggle('t-approach', 'approach');
+toggle('t-debug', 'debug');
+toggle('t-flip', 'flip', () => { depthUniforms.uFlipY.value = opts.flip ? 1 : 0; });
+toggle('zoom-flip', 'zoomFlip');
+$('zoom').addEventListener('input', e => {
+  opts.zoom = +e.target.value;
+  $('zoom-val').textContent = opts.zoom.toFixed(1) + '×';
+});
+$('t-exit').addEventListener('click', () => session && session.end());
+
+addEventListener('resize', () => {
+  if (renderer.xr.isPresenting) return;
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
