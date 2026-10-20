@@ -491,7 +491,9 @@ function updateDepth(frame, view) {
   const k = info.rawValueToMeters, dst = depthTex.image.data, n = Math.min(dst.length, src.length);
   for (let i = 0; i < n; i++) dst[i] = THREE.DataUtils.toHalfFloat(src[i] * k);
   depthTex.needsUpdate = true;
-  depthUniforms.uDepthMat.value.fromArray(info.normDepthBufferFromNormView.matrix);
+  const M = info.normTextureFromNormView || info.normDepthBufferFromNormView; /* nome nuovo e vecchio */
+  if (!M) { depthUniforms.uHasDepth.value = 0; return; }
+  depthUniforms.uDepthMat.value.fromArray(M.matrix);
   depthUniforms.uHasDepth.value = 1;
 }
 
@@ -516,7 +518,11 @@ function onFrame(t, frame) {
     const layer = session.renderState.baseLayer;
     if (layer) depthUniforms.uViewport.value.set(layer.framebufferWidth, layer.framebufferHeight);
 
-    if (pose && session.depthUsage) { step('profondità'); updateDepth(frame, pose.views[0]); }
+    if (pose && session.depthUsage) {
+      step('profondità');
+      try { updateDepth(frame, pose.views[0]); }
+      catch (e) { depthUniforms.uHasDepth.value = 0; if (t - lastErrAt > 1000) { showError('profondità', e); lastErrAt = t; } }
+    }
 
     /* zoom digitale */
     const z = opts.zoomOk ? opts.zoom : 1;
